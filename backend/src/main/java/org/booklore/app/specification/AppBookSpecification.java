@@ -565,24 +565,67 @@ public class AppBookSpecification {
             if (ids.isEmpty()) return cb.conjunction();
             Join<BookEntity, BookMetadataEntity> metadataJoin = getOrCreateJoin(root, "metadata", JoinType.INNER);
             Expression<Integer> ageRating = metadataJoin.get("ageRating");
-            
-            // Age rating ranges from frontend config (mirrored here for performance)
-            // 0: [0, 6), 6: [6, 10), 10: [10, 13), 13: [13, 16), 16: [16, 18), 18: [18, 21), 21: [21, inf)
+
+            // Age rating ranges: 0:[0,6), 6:[6,10), 10:[10,13), 13:[13,16), 16:[16,18), 18:[18,21), 21:[21,∞)
             List<Predicate> predicates = new ArrayList<>();
             for (Integer id : ids) {
-                predicates.add(switch (id) {
-                    case 0 -> cb.and(cb.greaterThanOrEqualTo(ageRating, 0), cb.lessThan(ageRating, 6));
-                    case 6 -> cb.and(cb.greaterThanOrEqualTo(ageRating, 6), cb.lessThan(ageRating, 10));
-                    case 10 -> cb.and(cb.greaterThanOrEqualTo(ageRating, 10), cb.lessThan(ageRating, 13));
-                    case 13 -> cb.and(cb.greaterThanOrEqualTo(ageRating, 13), cb.lessThan(ageRating, 16));
-                    case 16 -> cb.and(cb.greaterThanOrEqualTo(ageRating, 16), cb.lessThan(ageRating, 18));
-                    case 18 -> cb.and(cb.greaterThanOrEqualTo(ageRating, 18), cb.lessThan(ageRating, 21));
-                    case 21 -> cb.greaterThanOrEqualTo(ageRating, 21);
-                    default -> throw new APIException("Invalid ageRating bucket ID: " + id, HttpStatus.BAD_REQUEST);
-                });
+                predicates.add(ageRatingBucketPredicate(cb, ageRating, id));
             }
             Predicate combined = cb.or(predicates.toArray(Predicate[]::new));
             return "not".equals(mode) ? cb.not(combined) : combined;
+        };
+    }
+
+    /**
+     * Content-restriction variant of age rating filtering. Uses LEFT join so books with no
+     * metadata (null age_rating) always pass through. Handles both ALLOW_ONLY and EXCLUDE
+     * bucket lists from the user's content restriction settings.
+     *
+     * ALLOW_ONLY: book must fall in one of the allowed buckets OR have a null age_rating.
+     * EXCLUDE:    book must NOT fall in any excluded bucket, or have a null age_rating.
+     */
+    public static Specification<BookEntity> withAgeRatingContentRestriction(
+            List<String> allowedBuckets, List<String> excludedBuckets) {
+        return (root, query, cb) -> {
+            Join<BookEntity, BookMetadataEntity> metadataJoin = getOrCreateJoin(root, "metadata", JoinType.LEFT);
+            Expression<Integer> ageRating = metadataJoin.get("ageRating");
+            Predicate isNull = cb.isNull(ageRating);
+
+            List<Predicate> conditions = new ArrayList<>();
+
+            if (!allowedBuckets.isEmpty()) {
+                List<Integer> ids = parseIntList(allowedBuckets, "ageRating");
+                List<Predicate> rangePreds = new ArrayList<>();
+                for (Integer id : ids) {
+                    rangePreds.add(ageRatingBucketPredicate(cb, ageRating, id));
+                }
+                conditions.add(cb.or(cb.or(rangePreds.toArray(Predicate[]::new)), isNull));
+            }
+
+            if (!excludedBuckets.isEmpty()) {
+                List<Integer> ids = parseIntList(excludedBuckets, "ageRating");
+                List<Predicate> rangePreds = new ArrayList<>();
+                for (Integer id : ids) {
+                    rangePreds.add(ageRatingBucketPredicate(cb, ageRating, id));
+                }
+                conditions.add(cb.or(cb.not(cb.or(rangePreds.toArray(Predicate[]::new))), isNull));
+            }
+
+            if (conditions.isEmpty()) return cb.conjunction();
+            return cb.and(conditions.toArray(Predicate[]::new));
+        };
+    }
+
+    private static Predicate ageRatingBucketPredicate(CriteriaBuilder cb, Expression<Integer> ageRating, int id) {
+        return switch (id) {
+            case 0 -> cb.and(cb.greaterThanOrEqualTo(ageRating, 0), cb.lessThan(ageRating, 6));
+            case 6 -> cb.and(cb.greaterThanOrEqualTo(ageRating, 6), cb.lessThan(ageRating, 10));
+            case 10 -> cb.and(cb.greaterThanOrEqualTo(ageRating, 10), cb.lessThan(ageRating, 13));
+            case 13 -> cb.and(cb.greaterThanOrEqualTo(ageRating, 13), cb.lessThan(ageRating, 16));
+            case 16 -> cb.and(cb.greaterThanOrEqualTo(ageRating, 16), cb.lessThan(ageRating, 18));
+            case 18 -> cb.and(cb.greaterThanOrEqualTo(ageRating, 18), cb.lessThan(ageRating, 21));
+            case 21 -> cb.greaterThanOrEqualTo(ageRating, 21);
+            default -> throw new APIException("Invalid ageRating bucket ID: " + id, HttpStatus.BAD_REQUEST);
         };
     }
 

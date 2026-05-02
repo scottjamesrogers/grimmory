@@ -131,19 +131,43 @@ public class ContentRestrictionService {
     }
 
     private Integer getMaxAgeRating(List<UserContentRestrictionEntity> restrictions) {
-        return restrictions.stream()
-                .filter(r -> r.getRestrictionType() == ContentRestrictionType.AGE_RATING)
-                .filter(r -> r.getMode() == ContentRestrictionMode.EXCLUDE)
+        // EXCLUDE: minimum excluded bucket ID is the threshold (books with age >= threshold excluded)
+        Integer minExcluded = restrictions.stream()
+                .filter(r -> r.getRestrictionType() == ContentRestrictionType.AGE_RATING
+                        && r.getMode() == ContentRestrictionMode.EXCLUDE)
                 .map(r -> {
-                    try {
-                        return Integer.parseInt(r.getValue());
-                    } catch (NumberFormatException e) {
-                        return null;
-                    }
+                    try { return Integer.parseInt(r.getValue()); }
+                    catch (NumberFormatException e) { return null; }
                 })
                 .filter(Objects::nonNull)
                 .min(Integer::compareTo)
                 .orElse(null);
+        if (minExcluded != null) return minExcluded;
+
+        // ALLOW_ONLY: upper bound of the highest allowed bucket becomes the threshold
+        Integer maxAllowed = restrictions.stream()
+                .filter(r -> r.getRestrictionType() == ContentRestrictionType.AGE_RATING
+                        && r.getMode() == ContentRestrictionMode.ALLOW_ONLY)
+                .map(r -> {
+                    try { return Integer.parseInt(r.getValue()); }
+                    catch (NumberFormatException e) { return null; }
+                })
+                .filter(Objects::nonNull)
+                .max(Integer::compareTo)
+                .orElse(null);
+        return maxAllowed == null ? null : ageRatingBucketUpperBound(maxAllowed);
+    }
+
+    private static Integer ageRatingBucketUpperBound(int bucketId) {
+        return switch (bucketId) {
+            case 0 -> 6;
+            case 6 -> 10;
+            case 10 -> 13;
+            case 13 -> 16;
+            case 16 -> 18;
+            case 18 -> 21;
+            default -> null; // bucket 21 has no upper bound; null = allow all ages
+        };
     }
 
     private boolean hasExcludedContent(BookEntity book,

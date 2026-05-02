@@ -28,6 +28,10 @@ import org.booklore.repository.UserBookFileProgressRepository;
 import org.booklore.repository.UserBookProgressRepository;
 import org.booklore.service.book.BookService;
 import org.booklore.service.opds.MagicShelfBookService;
+import org.booklore.service.restriction.ContentRestrictionService;
+import org.booklore.model.dto.ContentRestriction;
+import org.booklore.model.enums.ContentRestrictionMode;
+import org.booklore.model.enums.ContentRestrictionType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -64,6 +68,7 @@ public class AppBookService {
     private final BookService bookService;
     private final MagicShelfBookService magicShelfBookService;
     private final EntityManager entityManager;
+    private final ContentRestrictionService contentRestrictionService;
 
     private final Cache<String, AppFilterOptions> filterOptionsCache = Caffeine.newBuilder()
             .expireAfterWrite(java.time.Duration.ofSeconds(30))
@@ -78,7 +83,8 @@ public class AppBookService {
                           AppBookMapper mobileBookMapper,
                           BookService bookService,
                           MagicShelfBookService magicShelfBookService,
-                          EntityManager entityManager) {
+                          EntityManager entityManager,
+                          ContentRestrictionService contentRestrictionService) {
         this.bookRepository = bookRepository;
         this.userBookProgressRepository = userBookProgressRepository;
         this.userBookFileProgressRepository = userBookFileProgressRepository;
@@ -88,6 +94,7 @@ public class AppBookService {
         this.bookService = bookService;
         this.magicShelfBookService = magicShelfBookService;
         this.entityManager = entityManager;
+        this.contentRestrictionService = contentRestrictionService;
     }
 
     public AppPageResponse<AppBookSummary> getBooks(BookListRequest req) {
@@ -1049,6 +1056,23 @@ public class AppBookService {
         String field = getSortField(req.sort());
         if (field.startsWith("userBookProgress.")) {
             specs.add(AppBookSpecification.withProgress(userId, true));
+        }
+
+        List<ContentRestriction> restrictions = contentRestrictionService.getUserRestrictions(userId);
+        if (!restrictions.isEmpty()) {
+            List<String> allowedBuckets = restrictions.stream()
+                    .filter(r -> r.getRestrictionType() == ContentRestrictionType.AGE_RATING
+                            && r.getMode() == ContentRestrictionMode.ALLOW_ONLY)
+                    .map(ContentRestriction::getValue)
+                    .toList();
+            List<String> excludedBuckets = restrictions.stream()
+                    .filter(r -> r.getRestrictionType() == ContentRestrictionType.AGE_RATING
+                            && r.getMode() == ContentRestrictionMode.EXCLUDE)
+                    .map(ContentRestriction::getValue)
+                    .toList();
+            if (!allowedBuckets.isEmpty() || !excludedBuckets.isEmpty()) {
+                specs.add(AppBookSpecification.withAgeRatingContentRestriction(allowedBuckets, excludedBuckets));
+            }
         }
 
         return AppBookSpecification.combine(specs.toArray(Specification[]::new));
