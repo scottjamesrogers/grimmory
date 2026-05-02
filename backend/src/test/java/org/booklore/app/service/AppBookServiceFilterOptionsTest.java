@@ -8,7 +8,10 @@ import org.booklore.exception.APIException;
 import org.booklore.app.dto.AppFilterOptions;
 import org.booklore.app.mapper.AppBookMapper;
 import org.booklore.model.dto.BookLoreUser;
+import org.booklore.model.dto.ContentRestriction;
 import org.booklore.model.dto.Library;
+import org.booklore.model.enums.ContentRestrictionMode;
+import org.booklore.model.enums.ContentRestrictionType;
 import org.booklore.model.entity.BookLoreUserEntity;
 import org.booklore.model.entity.BookEntity;
 import org.booklore.model.entity.ShelfEntity;
@@ -206,6 +209,47 @@ class AppBookServiceFilterOptionsTest {
     }
 
     // -------------------------------------------------------------------------
+    // Content restriction scoping (upstream issue #236)
+    // -------------------------------------------------------------------------
+
+    @Test
+    void getFilterOptions_consultsContentRestrictionService() {
+        mockAdminUser();
+        mockJpqlQueries();
+
+        service.getFilterOptions(null, null, null);
+
+        verify(contentRestrictionService).getUserRestrictions(userId);
+    }
+
+    @Test
+    void getFilterOptions_noUserRestrictions_doesNotApplyRestrictionScope() {
+        mockAdminUser();
+        when(contentRestrictionService.getUserRestrictions(userId)).thenReturn(List.of());
+        TypedQuery<Tuple> tupleQuery = mockJpqlQueries();
+
+        service.getFilterOptions(null, null, null);
+
+        verify(tupleQuery, never()).setParameter(eq("restrictionAllowedIds"), any());
+    }
+
+    @Test
+    void getFilterOptions_nonAgeRestrictionsOnly_doesNotApplyRestrictionScope() {
+        mockAdminUser();
+        when(contentRestrictionService.getUserRestrictions(userId))
+                .thenReturn(List.of(ContentRestriction.builder()
+                        .restrictionType(ContentRestrictionType.CATEGORY)
+                        .mode(ContentRestrictionMode.EXCLUDE)
+                        .value("Erotica")
+                        .build()));
+        TypedQuery<Tuple> tupleQuery = mockJpqlQueries();
+
+        service.getFilterOptions(null, null, null);
+
+        verify(tupleQuery, never()).setParameter(eq("restrictionAllowedIds"), any());
+    }
+
+    // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 
@@ -259,7 +303,7 @@ class AppBookServiceFilterOptionsTest {
     }
 
     @SuppressWarnings("unchecked")
-    private void mockJpqlQueries() {
+    private TypedQuery<Tuple> mockJpqlQueries() {
         TypedQuery<Tuple> tupleQuery = mock(TypedQuery.class);
         when(tupleQuery.setParameter(anyString(), any())).thenReturn(tupleQuery);
         when(tupleQuery.setMaxResults(anyInt())).thenReturn(tupleQuery);
@@ -275,5 +319,7 @@ class AppBookServiceFilterOptionsTest {
 
         when(entityManager.createQuery(anyString(), eq(Long.class)))
                 .thenReturn(longQuery);
+
+        return tupleQuery;
     }
 }
