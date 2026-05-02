@@ -577,19 +577,19 @@ public class AppBookSpecification {
     }
 
     /**
-     * Content-restriction variant of age rating filtering. Uses LEFT join so books with no
-     * metadata (null age_rating) always pass through. Handles both ALLOW_ONLY and EXCLUDE
-     * bucket lists from the user's content restriction settings.
+     * Content-restriction variant of age rating filtering. Asymmetric null handling:
+     * ALLOW_ONLY is an allowlist (default-deny), EXCLUDE is a denylist (default-allow).
      *
-     * ALLOW_ONLY: book must fall in one of the allowed buckets OR have a null age_rating.
-     * EXCLUDE:    book must NOT fall in any excluded bucket, or have a null age_rating.
+     * ALLOW_ONLY: book must fall in one of the allowed buckets. Null age_rating is hidden,
+     *             matching the reporter expectation in upstream issue #236 — newly imported
+     *             books that haven't been tagged shouldn't leak through to a restricted user.
+     * EXCLUDE:    book must NOT fall in any excluded bucket. Null age_rating passes through.
      */
     public static Specification<BookEntity> withAgeRatingContentRestriction(
             List<String> allowedBuckets, List<String> excludedBuckets) {
         return (root, query, cb) -> {
             Join<BookEntity, BookMetadataEntity> metadataJoin = getOrCreateJoin(root, "metadata", JoinType.LEFT);
             Expression<Integer> ageRating = metadataJoin.get("ageRating");
-            Predicate isNull = cb.isNull(ageRating);
 
             List<Predicate> conditions = new ArrayList<>();
 
@@ -599,7 +599,7 @@ public class AppBookSpecification {
                 for (Integer id : ids) {
                     rangePreds.add(ageRatingBucketPredicate(cb, ageRating, id));
                 }
-                conditions.add(cb.or(cb.or(rangePreds.toArray(Predicate[]::new)), isNull));
+                conditions.add(cb.or(rangePreds.toArray(Predicate[]::new)));
             }
 
             if (!excludedBuckets.isEmpty()) {
@@ -608,7 +608,7 @@ public class AppBookSpecification {
                 for (Integer id : ids) {
                     rangePreds.add(ageRatingBucketPredicate(cb, ageRating, id));
                 }
-                conditions.add(cb.or(cb.not(cb.or(rangePreds.toArray(Predicate[]::new))), isNull));
+                conditions.add(cb.or(cb.not(cb.or(rangePreds.toArray(Predicate[]::new))), cb.isNull(ageRating)));
             }
 
             if (conditions.isEmpty()) return cb.conjunction();

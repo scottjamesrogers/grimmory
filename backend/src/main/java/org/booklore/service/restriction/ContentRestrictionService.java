@@ -112,13 +112,17 @@ public class ContentRestrictionService {
         Set<String> allowedMoods = getValuesForTypeAndMode(restrictions, ContentRestrictionType.MOOD, ContentRestrictionMode.ALLOW_ONLY);
         Set<String> allowedContentRatings = getValuesForTypeAndMode(restrictions, ContentRestrictionType.CONTENT_RATING, ContentRestrictionMode.ALLOW_ONLY);
 
-        Integer maxAgeRating = getMaxAgeRating(restrictions);
+        AgeRestrictionThreshold ageThreshold = getAgeRestrictionThreshold(restrictions);
 
         return books.stream()
                 .filter(book -> !hasExcludedContent(book, excludedCategories, excludedTags, excludedMoods, excludedContentRatings))
                 .filter(book -> matchesAllowList(book, allowedCategories, allowedTags, allowedMoods, allowedContentRatings))
-                .filter(book -> isWithinAgeRating(book, maxAgeRating))
+                .filter(book -> isWithinAgeRating(book, ageThreshold))
                 .toList();
+    }
+
+    private record AgeRestrictionThreshold(Integer maxAge, boolean blockNullRated) {
+        static final AgeRestrictionThreshold NONE = new AgeRestrictionThreshold(null, false);
     }
 
     private Set<String> getValuesForTypeAndMode(List<UserContentRestrictionEntity> restrictions,
@@ -130,8 +134,8 @@ public class ContentRestrictionService {
                 .collect(Collectors.toSet());
     }
 
-    private Integer getMaxAgeRating(List<UserContentRestrictionEntity> restrictions) {
-        // EXCLUDE: minimum excluded bucket ID is the threshold (books with age >= threshold excluded)
+    private AgeRestrictionThreshold getAgeRestrictionThreshold(List<UserContentRestrictionEntity> restrictions) {
+        // EXCLUDE: minimum excluded bucket ID is the threshold. Null age passes through (denylist).
         Integer minExcluded = restrictions.stream()
                 .filter(r -> r.getRestrictionType() == ContentRestrictionType.AGE_RATING
                         && r.getMode() == ContentRestrictionMode.EXCLUDE)
@@ -142,9 +146,10 @@ public class ContentRestrictionService {
                 .filter(Objects::nonNull)
                 .min(Integer::compareTo)
                 .orElse(null);
-        if (minExcluded != null) return minExcluded;
+        if (minExcluded != null) return new AgeRestrictionThreshold(minExcluded, false);
 
-        // ALLOW_ONLY: upper bound of the highest allowed bucket becomes the threshold
+        // ALLOW_ONLY: upper bound of the highest allowed bucket becomes the threshold.
+        // Null age is blocked (allowlist semantics — see upstream issue #236).
         Integer maxAllowed = restrictions.stream()
                 .filter(r -> r.getRestrictionType() == ContentRestrictionType.AGE_RATING
                         && r.getMode() == ContentRestrictionMode.ALLOW_ONLY)
@@ -155,7 +160,8 @@ public class ContentRestrictionService {
                 .filter(Objects::nonNull)
                 .max(Integer::compareTo)
                 .orElse(null);
-        return maxAllowed == null ? null : ageRatingBucketUpperBound(maxAllowed);
+        if (maxAllowed == null) return AgeRestrictionThreshold.NONE;
+        return new AgeRestrictionThreshold(ageRatingBucketUpperBound(maxAllowed), true);
     }
 
     private static Integer ageRatingBucketUpperBound(int bucketId) {
@@ -273,17 +279,17 @@ public class ContentRestrictionService {
         return true;
     }
 
-    private boolean isWithinAgeRating(BookEntity book, Integer maxAgeRating) {
-        if (maxAgeRating == null) {
+    private boolean isWithinAgeRating(BookEntity book, AgeRestrictionThreshold threshold) {
+        if (threshold.maxAge() == null) {
             return true;
         }
 
         BookMetadataEntity metadata = book.getMetadata();
         if (metadata == null || metadata.getAgeRating() == null) {
-            return true;
+            return !threshold.blockNullRated();
         }
 
-        return metadata.getAgeRating() < maxAgeRating;
+        return metadata.getAgeRating() < threshold.maxAge();
     }
 
     private ContentRestriction toDto(UserContentRestrictionEntity entity) {
