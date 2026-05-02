@@ -494,7 +494,7 @@ public class AppBookService {
         List<AppFilterOptions.LanguageOption> languages = queryCountedOptions(
                 "m.language", "JOIN b.metadata m",
                 "AND m.language IS NOT NULL AND m.language <> ''",
-                scopeClause, accessibleLibraryIds, libraryId, shelfId, magicBookIds).stream()
+                scopeClause, accessibleLibraryIds, libraryId, shelfId, magicBookIds, restrictionAllowedIds).stream()
                 .map(c -> new AppFilterOptions.LanguageOption(
                         c.name(),
                         Locale.forLanguageTag(c.name()).getDisplayLanguage(Locale.ENGLISH),
