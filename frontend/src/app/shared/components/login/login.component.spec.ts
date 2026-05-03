@@ -285,7 +285,7 @@ describe('LoginComponent', () => {
 
     expect(remoteAuthRecovery.recover).toHaveBeenCalledOnce();
     expect(authService.clearSessionOnLoginPage).toHaveBeenCalledOnce();
-    expect(component.errorMessage).toBe('Cannot connect to the server. Please check your connection and try again.');
+    expect(component.errorMessage).toBe('auth.login.connectionError');
     expect(router.navigate).not.toHaveBeenCalled();
   });
 });

@@ -155,7 +155,6 @@ describe('AuthInterceptorService', () => {
     );
     recoveryService.isEnabled.mockReturnValue(true);
     recoveryService.recover.mockReturnValue(of(true));
-    authService.getInternalAccessToken.mockReturnValueOnce('expired-token');
     authService.getInternalAccessToken.mockReturnValue('recovered-token');
 
     const next = vi.fn((request: HttpRequest<unknown>) => {
