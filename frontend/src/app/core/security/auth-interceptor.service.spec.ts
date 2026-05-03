@@ -6,6 +6,7 @@ import { Observable, Subject, firstValueFrom, of, throwError } from 'rxjs';
 import { API_CONFIG } from '../config/api-config';
 import { AuthService } from '../../shared/service/auth.service';
 import { AuthInterceptorService } from './auth-interceptor.service';
+import { RemoteAuthRecoveryService } from './remote-auth-recovery.service';
 
 describe('AuthInterceptorService', () => {
   const authService = {
@@ -13,6 +14,11 @@ describe('AuthInterceptorService', () => {
     internalRefreshToken: vi.fn<() => Observable<{ accessToken: string; refreshToken: string }>>(),
     saveInternalTokens: vi.fn<(accessToken: string, refreshToken: string) => void>(),
     logout: vi.fn<() => void>(),
+  };
+
+  const recoveryService = {
+    isEnabled: vi.fn<() => boolean>(),
+    recover: vi.fn<() => Observable<boolean>>(),
   };
 
   const apiUrl = `${API_CONFIG.BASE_URL}/api/v1`;
@@ -24,11 +30,15 @@ describe('AuthInterceptorService', () => {
     authService.internalRefreshToken.mockReset();
     authService.saveInternalTokens.mockReset();
     authService.logout.mockReset();
+    recoveryService.isEnabled.mockReset();
+    recoveryService.recover.mockReset();
+    recoveryService.isEnabled.mockReturnValue(false);
 
     TestBed.resetTestingModule();
     TestBed.configureTestingModule({
       providers: [
         { provide: AuthService, useValue: authService },
+        { provide: RemoteAuthRecoveryService, useValue: recoveryService },
       ]
     });
 
@@ -135,6 +145,53 @@ describe('AuthInterceptorService', () => {
       next
     ))).rejects.toBeInstanceOf(HttpErrorResponse);
 
+    expect(authService.logout).toHaveBeenCalledOnce();
+  });
+
+  it('falls back to remote-auth recovery when refresh fails and recovery is enabled', async () => {
+    authService.getInternalAccessToken.mockReturnValueOnce('expired-token');
+    authService.internalRefreshToken.mockReturnValue(
+      throwError(() => new HttpErrorResponse({ status: 401 }))
+    );
+    recoveryService.isEnabled.mockReturnValue(true);
+    recoveryService.recover.mockReturnValue(of(true));
+    authService.getInternalAccessToken.mockReturnValueOnce('expired-token');
+    authService.getInternalAccessToken.mockReturnValue('recovered-token');
+
+    const next = vi.fn((request: HttpRequest<unknown>) => {
+      const authHeader = request.headers.get('Authorization');
+      if (authHeader === 'Bearer recovered-token') {
+        return of(new HttpResponse({ status: 200, body: authHeader }));
+      }
+      return throwError(() => new HttpErrorResponse({ status: 401 }));
+    });
+
+    const response = await firstValueFrom(interceptor(
+      new HttpRequest('GET', `${apiUrl}/books`),
+      next
+    ));
+
+    expect(recoveryService.recover).toHaveBeenCalledOnce();
+    expect(authService.logout).not.toHaveBeenCalled();
+    expect((response as HttpResponse<string>).body).toBe('Bearer recovered-token');
+  });
+
+  it('logs out when refresh fails and recovery also fails', async () => {
+    authService.getInternalAccessToken.mockReturnValue('expired-token');
+    authService.internalRefreshToken.mockReturnValue(
+      throwError(() => new HttpErrorResponse({ status: 401 }))
+    );
+    recoveryService.isEnabled.mockReturnValue(true);
+    recoveryService.recover.mockReturnValue(of(false));
+
+    const next = vi.fn(() => throwError(() => new HttpErrorResponse({ status: 401 })));
+
+    await expect(firstValueFrom(interceptor(
+      new HttpRequest('GET', `${apiUrl}/books`),
+      next
+    ))).rejects.toBeInstanceOf(HttpErrorResponse);
+
+    expect(recoveryService.recover).toHaveBeenCalledOnce();
     expect(authService.logout).toHaveBeenCalledOnce();
   });
 

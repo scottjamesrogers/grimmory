@@ -5,6 +5,7 @@ import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {of, throwError} from 'rxjs';
 
 import {OidcService} from '../../../core/security/oidc.service';
+import {RemoteAuthRecoveryService} from '../../../core/security/remote-auth-recovery.service';
 import {getTranslocoModule} from '../../../core/testing/transloco-testing';
 import {PublicAppSettings} from '../../service/app-settings.service';
 import {AuthService} from '../../service/auth.service';
@@ -54,6 +55,11 @@ describe('LoginComponent', () => {
     buildAuthUrl: vi.fn(),
   };
 
+  const remoteAuthRecovery = {
+    isEnabled: vi.fn<() => boolean>(),
+    recover: vi.fn(),
+  };
+
   function configureComponent(
     queryParams: Record<string, string> = {},
     settingsOverrides: Partial<PublicAppSettings> = {},
@@ -70,6 +76,7 @@ describe('LoginComponent', () => {
         {provide: AuthService, useValue: authService},
         {provide: Router, useValue: router},
         {provide: OidcService, useValue: oidcService},
+        {provide: RemoteAuthRecoveryService, useValue: remoteAuthRecovery},
         {
           provide: AppSettingsService,
           useValue: {
@@ -105,6 +112,9 @@ describe('LoginComponent', () => {
     oidcService.generateRandomString.mockReset();
     oidcService.storePkceState.mockReset();
     oidcService.buildAuthUrl.mockReset();
+    remoteAuthRecovery.isEnabled.mockReset();
+    remoteAuthRecovery.recover.mockReset();
+    remoteAuthRecovery.isEnabled.mockReturnValue(false);
   });
 
   afterEach(() => {
@@ -252,5 +262,30 @@ describe('LoginComponent', () => {
     expect(component.errorMessage).toBe('Could not reach the OIDC provider. Please try again later.');
     expect(component.isOidcLoginInProgress).toBe(false);
     expect(component.showLocalLogin).toBe(true);
+  });
+
+  it('redirects straight to the dashboard when remote-auth recovery succeeds', async () => {
+    remoteAuthRecovery.isEnabled.mockReturnValue(true);
+    remoteAuthRecovery.recover.mockReturnValue(of(true));
+    configureComponent();
+
+    await fixture.whenStable();
+
+    expect(remoteAuthRecovery.recover).toHaveBeenCalledOnce();
+    expect(router.navigate).toHaveBeenCalledWith(['/dashboard']);
+    expect(authService.clearSessionOnLoginPage).not.toHaveBeenCalled();
+  });
+
+  it('shows a connection error when remote-auth recovery fails', async () => {
+    remoteAuthRecovery.isEnabled.mockReturnValue(true);
+    remoteAuthRecovery.recover.mockReturnValue(of(false));
+    configureComponent();
+
+    await fixture.whenStable();
+
+    expect(remoteAuthRecovery.recover).toHaveBeenCalledOnce();
+    expect(authService.clearSessionOnLoginPage).toHaveBeenCalledOnce();
+    expect(component.errorMessage).toBe('Cannot connect to the server. Please check your connection and try again.');
+    expect(router.navigate).not.toHaveBeenCalled();
   });
 });
