@@ -10,6 +10,7 @@ import {take} from 'rxjs/operators';
 import {AppSettingsService} from '../../service/app-settings.service';
 import {TranslocoDirective, TranslocoService} from '@jsverse/transloco';
 import {OidcService} from '../../../core/security/oidc.service';
+import {RemoteAuthRecoveryService} from '../../../core/security/remote-auth-recovery.service';
 
 @Component({
   selector: 'app-login',
@@ -37,6 +38,7 @@ export class LoginComponent implements OnInit {
   private authService = inject(AuthService);
   private oidcService = inject(OidcService);
   private appSettingsService = inject(AppSettingsService);
+  private remoteAuthRecovery = inject(RemoteAuthRecoveryService);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
   private translocoService = inject(TranslocoService);
@@ -69,6 +71,18 @@ export class LoginComponent implements OnInit {
   private static readonly MAX_REDIRECT_COUNT = 3;
 
   ngOnInit(): void {
+    if (this.remoteAuthRecovery.isEnabled()) {
+      this.remoteAuthRecovery.recover().pipe(take(1)).subscribe(ok => {
+        if (ok) {
+          this.router.navigate(['/dashboard']);
+        } else {
+          this.authService.clearSessionOnLoginPage();
+          this.errorMessage = this.translocoService.translate('auth.login.connectionError');
+        }
+      });
+      return;
+    }
+
     this.authService.clearSessionOnLoginPage();
 
     this.route.queryParams.pipe(take(1)).subscribe(params => {
